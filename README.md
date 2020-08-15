@@ -71,7 +71,29 @@ conn.Table<Data>()
     .Delete();
 ```
 
+- **数据类**
+``` cs
+[Table("TData")]
+public class Data
+{
+    [PrimaryKey]
+    [AutoIncrement]
+    public int id { get; set; }
+    public string name { get; set; }
+    [Column("Tage")]
+    public int age { get; set; }
+
+    public override string ToString()
+    {
+        return string.Format("{{id:{0},name:{1},agr:{2}}}", id, name, age);
+    }
+}
+```
+
 ## **性能测试**
+* 暂无
+
+## **数据类型支持**
 * 暂无
 
 ## 备注

@@ -3,16 +3,13 @@
 * **简介**
   > 基于Sqlite3开源数据库, 使用C#语言开发
   > 为Unity等C#平台提供简单易用丶高效性能的对象存储
-  > 此项目基于[SQLite4Unity3d](https://github.com/robertohuertasm/SQLite4Unity3d)修改, 使用sqlite3开源数据库(SQLite4Unity3d使用sqlite-net)
-* **Sqlite3简介**
-  > Sqlite3是遵守ACID的关系型数据库, 小巧丶嵌入式丶无需安装, 
-  > 能够跟很多种语言相结合, 运行时占有资源非常低
-  
-## 使用特点
-* 无需手动构建SQL语句
-* 使用C#反射构建对象和数据表信息
-* GenCode生成代码类, 静态构建对象以及数据表信息(无需使用反射)
 
+* **Sqlite3简介**
+  > Sqlite3是遵守ACID的关系型数据库, 小巧丶嵌入式丶无需安装
+  > 能够跟很多种语言相结合, 运行时占有资源非常低
+
+* **原项目**
+  > 此项目基于[SQLite4Unity3d](https://github.com/robertohuertasm/SQLite4Unity3d), 优化结构丶扩展数据类型丶支持生成代码静态构建Mapping
 
 ## 如何使用?
 
@@ -89,11 +86,50 @@ public class Data
 }
 ```
 
+## 特点
+* 无需手动构建SQL语句
+* 使用C#反射构建对象和数据表信息
+* GenCode生成代码类, 静态构建对象以及数据表信息(无需使用反射)
+
 ## **性能测试**
 * 暂无
 
-## **数据类型** 
-* 暂无
+## **数据类型**
+* **基础类型/数组类型**
+
+|  类型           |      Base       | Array           | List          |
+| :------------ | :-----------: | :------------: | :-----------: |
+| bool            |        √          |        √           |        √         |
+| byte            |        √          |        √           |        ×         |
+| short           |        √          |        √           |        √         |
+| int               |        √          |        √           |        √         |
+| long            |        √          |        √           |        √         |
+| float            |        √          |        √           |        √         |
+| double        |        √          |        √           |        √         |
+| decimal       |        √          |        √           |        √         |
+| string          |        √          |        √           |        √         |
+
+> (注: 注重性能时, 应避免直接使用Array和List)
+
+* **Dictionary字典**
+
+|  类型           | Key     | Value  | 支持    |
+| :----------- | :------: | :------: | :------: |
+| Dictionary  |   int      | int      |    √     |
+| Dictionary  |   int      | string |    √     |
+| Dictionary  |  string  | string |    √     |
+| Dictionary  |  unkonw  | unkonw |    unkonw     |
+
+> 自行扩展所需类型
+
+* **接口类型**
+
+|  类型          | 支持    |
+| :----------- | :------: |
+| IDataText  |   √       |
+| IDataBytes |   √      |
+
+> 子类型需实现以上接口 (注: 注重性能时, 不应使用以上方式)
 
 ## 说明
 * 此项目创建于 `2020/08/15` , 尚不明确存在的BUG和性能问题, 未来将会陆续修复丶优化此项目, 如果您有任何问题, 请与我联系

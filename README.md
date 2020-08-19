@@ -3,15 +3,11 @@
 * **简介**
   > 基于Sqlite3开源数据库, 使用C#语言开发
   > 为Unity等C#平台提供简单易用丶高效性能的对象存储
-  
+  > 此项目基于[SQLite4Unity3d](https://github.com/robertohuertasm/SQLite4Unity3d)修改, 使用sqlite3开源数据库(SQLite4Unity3d使用sqlite-net)
 * **Sqlite3简介**
   > Sqlite3是遵守ACID的关系型数据库, 小巧丶嵌入式丶无需安装, 
   > 能够跟很多种语言相结合, 运行时占有资源非常低
   
-* **致谢**
-> **SQLite4Unity3d:** http://www.example.com
-
-
 ## 使用特点
 * 无需手动构建SQL语句
 * 使用C#反射构建对象和数据表信息

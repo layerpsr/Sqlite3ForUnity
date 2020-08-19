@@ -18,7 +18,7 @@ namespace Sqlite3
                     typeof(Example.Data),
                 };
 
-                var model = new Config(null) { PK = "id", AllAutoCreateIns = true };
+                var model = new Config(null) { PK = "id" };
                 var list = new List<Config>();
                 foreach (var type in types)
                 {

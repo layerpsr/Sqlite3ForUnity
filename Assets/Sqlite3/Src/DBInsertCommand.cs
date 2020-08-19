@@ -2,13 +2,14 @@
 namespace Sqlite3
 {
     using System;
+    using System.Collections;
+    using System.Collections.Generic;
     using System.Linq;
     using Mono.Data.Sqlite;
     using UnityEngine;
 
     public class DBInsertCommand
     {
-        public bool Initialized { get; set; }
         public string CommandText { get; set; }
         private DBConnection _conn { get; set; }
         private SqliteCommand command { get; set; }
@@ -17,63 +18,59 @@ namespace Sqlite3
         {
             this._conn = conn;
         }
-        ~DBInsertCommand()
-        {
-            Dispose(false);
-        }
 
-        public int ExecuteNonQuery(object[] source)
+        public int ExecuteUpdate(object[] objs)
         {
             if (_conn.Trace)
             {
-                int i = 0;
-                var binding = (from obj in source select string.Format(" {0}:{1} ", i++, obj));
-                Debug.Log(string.Format("{0}\nBinding: [{1}]", this.CommandText, string.Join(",", binding)));
+                var binding = new List<string>();
+                for (int i = 0; i < objs.Length; i++)
+                {
+                    var fullname = objs[i]?.GetType().FullName;
+                    var is_ie_obj = fullname != null &&
+                        (fullname.StartsWith("System.Collections.Generic.List") || fullname.IndexOf("[]") >= 0);
+                    if (is_ie_obj)
+                    {
+                        string ss = null;
+                        foreach (object o in (IEnumerable)objs[i])
+                        {
+                            if (ss != null) ss += ",";
+                            ss += o ?? "";
+                        }
+                        binding.Add(string.Format("{0}:\t[{1}]", i, ss));
+                    }
+                    else
+                        binding.Add(string.Format("{0}:\t{1} ", i, objs[i]));
+                }
+                Debug.Log(string.Format("{0}\nBinding:\n{1}", this.CommandText, string.Join("\n", binding)));
             }
-
-            if (!this.Initialized)
-            {
+            if (this.command == null)
                 this.command = Prepare();
-                this.Initialized = true;
-            }
             //bind the values.
             this.command.Parameters.Clear();
-            if (source != null)
+            if (objs != null)
             {
-                for (int i = 0; i < source.Length; i++)
-                    DBCommand.BindParameter(this.command, source[i]);
+                for (int i = 0; i < objs.Length; i++)
+                    DBCommand.BindParameter(this.command, objs[i]);
             }
-
             return this.command.ExecuteNonQuery();
         }
-
-        protected virtual SqliteCommand Prepare()
+        public void Dispose()
+        {
+            var cmd = this.command;
+            this.command = null;
+            if (cmd != null)
+            {
+                cmd.Cancel();
+                cmd.Dispose();
+            }
+        }
+        private SqliteCommand Prepare()
         {
             var command = new SqliteCommand(this.CommandText, this._conn.handle);
             command.Prepare();
             return command;
         }
 
-        public void Dispose()
-        {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-        private void Dispose(bool disposing)
-        {
-            if (this.command != null)
-            {
-                try
-                {
-                    command.Cancel();
-                    command.Dispose();
-                }
-                finally
-                {
-                    this.command = null;
-                    this._conn = null;
-                }
-            }
-        }
     }
 }

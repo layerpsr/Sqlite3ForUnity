@@ -8,19 +8,22 @@ namespace Sqlite3
     using System.Linq.Expressions;
     using System.Threading;
     using Mono.Data.Sqlite;
+    using UnityEngine;
+    using Random = System.Random;
 
     public class DBConnection
     {
+        //Mapping
+        private Dictionary<string, TableMapping> _mappings;
+
         //连接实例
         public SqliteConnection handle { get; private set; }
         //连接信息
         public string databasePath { get; private set; }
-        public string databaseSource { get; set; } = "DATA SOURCE={0};";
+        public string databaseSource { get; set; } = "DATA SOURCE={0}";
         private bool open = false;
         //Trace
-        public bool Trace { get; set; } = true;
-        //Mapping
-        private Dictionary<string, TableMapping> _mappings;
+        public bool Trace { get; set; } = false;
         //事务
         private int _transactionDepth;
 
@@ -70,7 +73,7 @@ namespace Sqlite3
         }
 
 
-        #region 创建表丶删除表
+        #region 创建表丶删除表丶清空表
         /// <summary> 删除表 </summary>
         public int DropTable<T>()
         {
@@ -79,9 +82,9 @@ namespace Sqlite3
         /// <summary> 删除表 </summary>
         public int DropTable(Type type)
         {
-            var table = GetMapping(type);
+            var table = GetMappingForce(type);
             var query = string.Format("DROP TABLE IF EXISTS \"{0}\"", table.TableName);
-            return Execute(query);
+            return ExecuteUpdate(query);
         }
         /// <summary> 创建表 </summary>
         public int CreateTable<T>()
@@ -91,7 +94,7 @@ namespace Sqlite3
         /// <summary> 创建表 </summary>
         public int CreateTable(Type type)
         {
-            var table = GetMapping(type);
+            var table = GetMappingForce(type);
 
             string query = "CREATE TABLE IF NOT EXISTS \"" + table.TableName + "\"(\n";
 
@@ -99,14 +102,26 @@ namespace Sqlite3
             query += string.Join(",\n", decls.ToArray());
             query += ")";
 
-            return Execute(query);
+            return ExecuteUpdate(query);
+        }
+        /// <summary>清空表 </summary>
+        public int ClearTable<T>()
+        {
+            return ClearTable(typeof(T));
+        }
+        /// <summary>清空表 </summary>
+        public int ClearTable(Type type)
+        {
+            var table = GetMapping(type);
+            var query = string.Format("DELETE FROM \"{0}\"", table.TableName);
+            return ExecuteUpdate(query);
         }
         #endregion
 
 
         #region 事务处理
         /// <summary>在事务中执行</summary>
-        public void RunTransaction(Action action)
+        public void RunInTransaction(Action action)
         {
             try
             {
@@ -126,7 +141,7 @@ namespace Sqlite3
             if (Interlocked.CompareExchange(ref _transactionDepth, 1, 0) == 0)
                 try
                 {
-                    Execute("BEGIN TRANSACTION;");
+                    ExecuteUpdate("BEGIN TRANSACTION;");
                 }
                 catch (Exception)
                 {
@@ -140,7 +155,7 @@ namespace Sqlite3
         public void Commit()
         {
             if (Interlocked.Exchange(ref _transactionDepth, 0) != 0)
-                Execute("commit");
+                ExecuteUpdate("commit");
         }
         /// <summary>保存"快照"</summary>
         public string SaveTransactionPoint()
@@ -149,7 +164,7 @@ namespace Sqlite3
             string ret_val = "S" + new Random().Next(short.MaxValue) + "D" + depth;
             try
             {
-                Execute("SAVEPOINT " + ret_val);
+                ExecuteUpdate("SAVEPOINT " + ret_val);
             }
             catch (Exception)
             {
@@ -170,7 +185,7 @@ namespace Sqlite3
                 if (string.IsNullOrEmpty(savepoint))
                 {
                     if (Interlocked.Exchange(ref _transactionDepth, 0) > 0)
-                        Execute("ROLLBACK;");
+                        ExecuteUpdate("ROLLBACK;");
                 }
                 else
                     DoSavePointExecute(savepoint, "ROLLBACK TO ");
@@ -203,7 +218,7 @@ namespace Sqlite3
 #else
                         Thread.VolatileWrite(ref _transactionDepth, depth);
 #endif
-                        Execute(cmd + savepoint);
+                        ExecuteUpdate(cmd + savepoint);
                         return;
                     }
             }
@@ -212,6 +227,7 @@ namespace Sqlite3
                 "savePoint is not valid, and should be the result of a call to SaveTransactionPoint.", "savePoint");
         }
         #endregion
+
 
         #region 查询记录
         public TableQuery<T> Table<T>() where T : new()
@@ -227,7 +243,7 @@ namespace Sqlite3
         {
             return Table<T>().Where(predicate).FirstOrDefault();
         }
-        public object LastInserRowid(TableMapping map)
+        private object LastInserRowid(TableMapping map)
         {
             var cmd = CreateCommand("");
             return cmd.LastInserRowid(map);
@@ -256,12 +272,71 @@ namespace Sqlite3
         {
             return Insert(obj, "OR REPLACE", objType);
         }
-        public int Insert(object obj, string extra, Type obj_type)
+        public int InsertAll(IEnumerable objs)
         {
-            if (obj == null || obj_type == null)
+            Type type = null;
+            foreach (object obj in objs)
+            {
+                type = obj?.GetType();
+                if (type != null) break;
+            }
+            return InsertAll(objs, "", type);
+        }
+        public int InsertAll(IEnumerable objs, string extra)
+        {
+            Type type = null;
+            foreach (object obj in objs)
+            {
+                type = obj?.GetType();
+                if (type != null) break;
+            }
+            return InsertAll(objs, extra, type);
+        }
+        public int InsertAll(IEnumerable objs, Type type)
+        {
+            return InsertAll(objs, "", type);
+        }
+        private int InsertAll(IEnumerable objs, string extra, Type type)
+        {
+            if (type == null)
                 return 0;
 
+            var table = GetMapping(type);
+            if (table == null)
+                return 0;
+
+            int ret = 0;
+            try
+            {
+                RunInTransaction(() =>
+                {
+                    foreach (object obj in objs)
+                        ret += Insert(obj, extra, table);
+                });
+            }
+            finally
+            {
+                table.Dispose();
+            }
+            return ret;
+        }
+        private int Insert(object obj, string extra, Type obj_type)
+        {
             var table = GetMapping(obj_type);
+            try
+            {
+                return Insert(obj, extra, table);
+            }
+            finally
+            {
+                table?.Dispose();
+            }
+        }
+        private int Insert(object obj, string extra, TableMapping table)
+        {
+            if (obj == null || table == null)
+                return 0;
+
             var has_autoinc_pk = table.PK != null && table.PK.IsAutoInc;
             if (has_autoinc_pk && table.PK.ColumnType == typeof(Guid))
             {
@@ -276,8 +351,8 @@ namespace Sqlite3
             for (int i = 0; i < vals.Length; i++)
                 vals[i] = cols[i].GetValue(obj);
 
-            DBInsertCommand cmd = table.GetInsertCommand(this, extra);
-            var count = cmd.ExecuteNonQuery(vals);
+            var cmd = table.GetInsertCommand(this, extra);
+            var count = cmd.ExecuteUpdate(vals);
 
             if (has_autoinc_pk)
             {
@@ -285,33 +360,6 @@ namespace Sqlite3
                 table.PK.SetValue(obj, id);
             }
             return count;
-        }
-        public int InsertAll(IEnumerable objs)
-        {
-            int ret = 0;
-            RunTransaction(() =>
-            {
-                foreach (object obj in objs) ret += Insert(obj);
-            });
-            return ret;
-        }
-        public int InsertAll(IEnumerable objs, string extra)
-        {
-            int ret = 0;
-            RunTransaction(() =>
-            {
-                foreach (object obj in objs) ret += Insert(obj, extra);
-            });
-            return ret;
-        }
-        public int InsertAll(IEnumerable objs, Type type)
-        {
-            int ret = 0;
-            RunTransaction(() =>
-            {
-                foreach (object obj in objs) ret += Insert(obj, type);
-            });
-            return ret;
         }
         #endregion
 
@@ -340,12 +388,12 @@ namespace Sqlite3
                 table.TableName,
                 string.Join(",", (from c in cols select "\"" + c.Name + "\" = ? ")),
                 pk.Name);
-            return Execute(query, ps.ToArray());
+            return ExecuteUpdate(query, ps.ToArray());
         }
         public int UpdateAll(IEnumerable objs)
         {
             int ret = 0;
-            RunTransaction(() =>
+            RunInTransaction(() =>
             {
                 foreach (object obj in objs) ret += Update(obj);
             });
@@ -366,7 +414,7 @@ namespace Sqlite3
                 throw new NotSupportedException("Cannot update " + table.TableName + ": it has no PK");
 
             string query = string.Format("DELETE FROM \"{0}\" WHERE \"{1}\" = ?", table.TableName, pk.Name);
-            return Execute(query, pk.GetValue(obj));
+            return ExecuteUpdate(query, pk.GetValue(obj));
         }
         public int Delete<T>(object primary_key)
         {
@@ -378,13 +426,13 @@ namespace Sqlite3
                 throw new NotSupportedException("Cannot update " + table.TableName + ": it has no PK");
 
             string query = string.Format("DELETE FROM \"{0}\" WHERE \"{1}\" = ?", table.TableName, pk.Name);
-            return Execute(query, primary_key);
+            return ExecuteUpdate(query, primary_key);
         }
         public int DeleteAll<T>()
         {
             var table = GetMapping(typeof(T));
             string query = string.Format("DELETE FROM \"{0}\"", table.TableName);
-            return Execute(query);
+            return ExecuteUpdate(query);
         }
         #endregion
 
@@ -392,10 +440,10 @@ namespace Sqlite3
         /// <summary>
         /// 执行Update Sql
         /// </summary>
-        public int Execute(string query, params object[] args)
+        public int ExecuteUpdate(string query, params object[] args)
         {
             var cmd = CreateCommand(query, args);
-            return cmd.ExecuteNonQuery();
+            return cmd.ExecuteUpdate();
         }
         /// <summary>
         /// Query Sql
@@ -408,10 +456,10 @@ namespace Sqlite3
         /// <summary>
         /// 执行Query Sql, 返回一个迭代器
         /// </summary>
-        public IEnumerable<T> DeferredQuery<T>(string query, params object[] args) where T : new()
+        public IEnumerable<T> QueryDeferred<T>(string query, params object[] args) where T : new()
         {
             var cmd = CreateCommand(query, args);
-            return cmd.ExecuteDeferredQuery<T>();
+            return cmd.ExecuteQueryDeferred<T>();
         }
         public DBCommand NewCommand() { return new DBCommand(this); }
         public DBCommand CreateCommand(string query, params object[] args)
@@ -426,18 +474,23 @@ namespace Sqlite3
             return cmd;
         }
 
+        public TableMapping GetMappingForce(Type type)
+        {
+            return MappingMgr.GetMapping(type) ?? new TableMemMapping(type); ;
+        }
         public TableMapping GetMapping(Type type)
         {
             if (_mappings == null) _mappings = new Dictionary<string, TableMapping>();
-            TableMapping map;
-            if (!_mappings.TryGetValue(type.FullName, out map))
+            TableMapping table;
+            if (!_mappings.TryGetValue(type.FullName, out table))
             {
-                map = MappingMgr.GetMapping(type) ?? new TableMemMapping(type);
-                _mappings[type.FullName] = map;
+                table = GetMappingForce(type);
+                //校验当前数据库的表
+                if (ProofTestTable(table))
+                    _mappings[type.FullName] = table;
             }
-            return map;
+            return table;
         }
-
 
         public static bool CreateFile(string path, bool del_exists = false)
         {
@@ -449,6 +502,104 @@ namespace Sqlite3
                 return true;
             }
             return false;
+        }
+
+        //校验当前数据表, 当与实际表
+        private bool ProofTestTable(TableMapping table)
+        {
+            //先尝试创建表
+            var create_sql = "CREATE TABLE IF NOT EXISTS \"" + table.TableName + "\"(\n";
+            create_sql += string.Join(",\n", (table.Columns.Select(p => Orm.SqlDecl(p))));
+            create_sql += ")";
+            var create_lst = Dict(create_sql);
+            ExecuteUpdate(create_sql);
+            //从数据库拉取表的信息
+            var command = CreateCommand("SELECT sql FROM sqlite_master WHERE type = \"table\" AND name = ? ;", table.TableName);
+            var exists_sql = command.ExecuteScalar<string>();
+            var exists_lst = Dict(exists_sql);
+            //比对表的差异性
+            bool rebuild = create_lst.Count < exists_lst.Count;
+            var add_cols = new List<string>();
+            for (int i = 0; i < create_lst.Count && !rebuild; i++)
+            {
+                var col1 = create_lst[i];
+                if (i < exists_lst.Count)
+                {
+                    var col2 = exists_lst[i];
+                    if (!col1.Item1.Equals(col2.Item1) || !col1.Item2.Equals(col2.Item2)) rebuild = true;
+                }
+                else add_cols.Add(col1.Item2);
+            }
+            if (rebuild)
+            {
+                var same_cols = new List<string>();
+                for (int i = 0; i < create_lst.Count; i++)
+                    for (int j = 0; j < exists_lst.Count; j++)
+                        if (create_lst[i].Item1.Equals(exists_lst[j].Item1))
+                        {
+                            same_cols.Add(create_lst[i].Item1);
+                            break;
+                        }
+                //重建数据表(创建临时表->迁移相同字段的数据->删除临时表)
+                RunInTransaction(() =>
+                {
+                    var table_name = table.TableName;
+                    var table_temp = table_name + "_temp";
+                    ExecuteUpdate("PRAGMA foreign_keys = off;");
+                    ExecuteUpdate(string.Format("DROP TABLE IF EXISTS \"{0}\" ;", table_temp));
+                    ExecuteUpdate(string.Format("CREATE TABLE \"{1}\" AS SELECT * FROM \"{0}\" ;", table_name, table_temp));
+                    ExecuteUpdate(string.Format("DROP TABLE \"{0}\" ;", table_name));
+                    ExecuteUpdate(create_sql);
+                    if (same_cols.Count > 0)
+                    {
+                        var fields = string.Join(",", same_cols);
+                        //ExecuteUpdate("INSERT INTO \"{0}\" ( {2} ) SELECT {2} FROM \"{0}_temp_table\";");
+                        ExecuteUpdate(string.Format("INSERT INTO \"{0}\" ( {2} ) SELECT {2} FROM \"{1}\";", table_name, table_temp, fields));
+                    }
+                    ExecuteUpdate(string.Format("DROP TABLE \"{0}\" ;", table_temp));
+                    ExecuteUpdate("PRAGMA foreign_keys = on;");
+                    Debug.LogWarning(string.Format("column exception, rebuild sql: {0}\n{1}", table_name, create_sql));
+                });
+            }
+            else if (add_cols != null && add_cols.Count > 0)
+            {
+                //追加新的字段
+                RunInTransaction(() =>
+                {
+                    var table_name = table.TableName;
+                    foreach (var field in add_cols)
+                    {
+                        ExecuteUpdate(string.Format("ALTER TABLE \"{0}\" ADD COLUMN {1};", table_name, field));
+                        Debug.LogWarning(string.Format("Alter table add column {0}:{1}", table_name, field));
+                    }
+                });
+            }
+
+            return true;
+        }
+        static List<(string, string)> Dict(string sql)
+        {
+            if (string.IsNullOrEmpty(sql))
+                throw new Exception("Can't create a TableMapping instance, sql: " + sql);
+
+            var i1 = sql.IndexOf("(") + 1;
+            var i2 = sql.IndexOf(")");
+            sql = sql.Substring(i1, i2 - i1).Replace("\n", "").Replace("\r", "");
+
+            //Debug.Log(sql);
+            var lst = new List<(string, string)>();
+            foreach (var c in sql.Split(','))
+            {
+                var col = c.Trim();
+                if (col.StartsWith("\""))
+                {
+                    i2 = col.IndexOf("\" ");
+                    col = col.Substring(1, i2 - 1) + col.Substring(i2 + 1);
+                }
+                i2 = col.IndexOf(" ");
+                lst.Add((col.Substring(0, i2), col));
+            }
+            return lst;
         }
     }
 }

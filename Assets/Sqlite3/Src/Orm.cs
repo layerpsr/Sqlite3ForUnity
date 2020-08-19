@@ -1,9 +1,12 @@
-
 namespace Sqlite3
 {
     using System;
+    using System.Collections.Generic;
+    using System.Linq;
     using System.Reflection;
+    using System.Text.RegularExpressions;
     using Sqlite3.Attribute;
+    using UnityEngine;
 
     public static class Orm
     {
@@ -36,18 +39,27 @@ namespace Sqlite3
                     return "VARCHAR (" + len.Value + ")";
                 return "VARCHAR";
             }
-            if (type == typeof(TimeSpan) || type == typeof(DateTimeOffset))
-                return "BIGINT";
-            if (type == typeof(DateTime))
-                return "DATE";
+
             if (type.IsEnum)
-            {
                 return "INTEGER";
-            }
             if (type == typeof(byte[]))
                 return "BLOB";
             if (type == typeof(Guid))
                 return "VARCHAR(36)";
+
+            if (type == typeof(TimeSpan) || type == typeof(DateTimeOffset))
+                return "BIGINT";
+            if (type == typeof(DateTime))
+                return "DATE";
+
+            //数据扩展支持(Array/List/Dict)
+            if (SupportExtend.IsSupportType(type))
+                return "VARCHAR";
+            //自定义接口实现
+            if (SupportExtend.IsSupportIDataText(type))
+                return "VARCHAR";
+            if (SupportExtend.IsSupportIDataBytes(type))
+                return "BLOB";
 
             throw new NotSupportedException("Don't know about " + type);
         }

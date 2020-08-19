@@ -1,8 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-
-namespace Sqlite3.Attribute
+﻿namespace Sqlite3.Attribute
 {
+    using System;
+
     /**
     * 定义一个数据表
     */
@@ -16,35 +15,6 @@ namespace Sqlite3.Attribute
             this.Name = name;
         }
     }
-
-#if UNITY_EDITOR
-    /**
-    * 定义一个表配置(仅在Editor下, Gen Code时有效)
-    */
-    [AttributeUsage(AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = false)]
-    public class TableConfigAttribute : TableAttribute
-    {
-        //主键字段名
-        public string PK { get; set; }
-        public bool AutoInc { get; set; } = false;
-        //唯一约束字段名称
-        public string[] Uniques { get; set; }
-        //不为空字段名称
-        public string[] NotNulls { get; set; }
-        //默认值信息
-        public Dictionary<string, string> DefaultValues { get; set; }
-        //长度信息
-        public Dictionary<string, int?> MaxLengths { get; set; }
-        //忽略字段信息
-        public string[] Ignores { get; set; }
-
-        public TableConfigAttribute() { }
-        public TableConfigAttribute(string name)
-        {
-            this.Name = name;
-        }
-    }
-#endif
 
     /**
     * 定义一个字段别名

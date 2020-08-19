@@ -31,6 +31,9 @@ namespace Sqlite3
         //最大长度
         public int? MaxLength { get; protected set; }
 
+        //自动创建对象,当 SetValue 为null时, 为其创建默认对象
+        public bool IsAutoCreateIns { get; protected set; }
+
         protected Column() { }
 
         public void SetPropertyName(string name)

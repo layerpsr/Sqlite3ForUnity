@@ -20,6 +20,12 @@
             public string ColumnName { get; set; }
             public bool Ascending { get; set; }
         }
+        protected class Betweening
+        {
+            public string ColumnName { get; set; }
+            public string Start { get; set; }
+            public string End { get; set; }
+        }
     }
 
     public class TableQuery<T> : BaseQuery, IEnumerable<T>
@@ -32,6 +38,7 @@
         private int? _limit;
         private int? _offset;
         private List<Ordering> _orderBys;
+        private Betweening _betweenBy;
         private Expression _where;
         //Select
         private Expression _selector;
@@ -55,6 +62,7 @@
             ins._where = _where;
             ins._deferred = _deferred;
             if (_orderBys != null) ins._orderBys = new List<Ordering>(_orderBys);
+            ins._betweenBy = _betweenBy;
             ins._limit = _limit;
             ins._offset = _offset;
             //Select
@@ -104,6 +112,37 @@
         public TableQuery<T> OrderBy<U>(Expression<Func<T, U>> orderExpr)
         {
             return AddOrderBy(orderExpr, true);
+        }
+        public TableQuery<T> Between<U>(Expression<Func<T, U>> orderExpr, string start, string end)
+        {
+            if (orderExpr.NodeType == ExpressionType.Lambda)
+            {
+                LambdaExpression lambda = orderExpr;
+
+                MemberExpression mem = null;
+
+                UnaryExpression unary = lambda.Body as UnaryExpression;
+                if (unary != null && unary.NodeType == ExpressionType.Convert)
+                    mem = unary.Operand as MemberExpression;
+                else
+                    mem = lambda.Body as MemberExpression;
+
+                if (mem != null && mem.Expression.NodeType == ExpressionType.Parameter)
+                {
+                    TableQuery<T> q = Clone<T>();
+                    q._betweenBy = new Betweening
+                    {
+                        ColumnName = this.Table.FindColumnWithPropertyName(mem.Member.Name).Name,
+                        Start = start,
+                        End = end
+                    };
+                    return q;
+                }
+
+                throw new NotSupportedException("Between does not support: " + orderExpr);
+            }
+
+            throw new NotSupportedException("Must be a predicate");
         }
         public TableQuery<T> OrderByDescending<U>(Expression<Func<T, U>> orderExpr)
         {
@@ -192,25 +231,37 @@
             if (!_deferred)
                 return GenerateQuery("*").ExecuteQuery<T>().GetEnumerator();
 
-            return GenerateQuery("*").ExecuteDeferredQuery<T>().GetEnumerator();
+            return GenerateQuery("*").ExecuteQueryDeferred<T>().GetEnumerator();
         }
         public List<T> Query(string select_list = "*")
         {
             return GenerateQuery(select_list).ExecuteQuery<T>(); ;
         }
-        public int Update(object obj)
+        public int Update(T obj)
         {
             if (obj == null || _where == null)
                 return 0;
             var table = this._conn.GetMapping(typeof(T));
-            return GenerateUpdate(obj, table).ExecuteNonQuery();
+            return GenerateUpdate(obj, table).ExecuteUpdate();
+        }
+        public int UpdateOrInsert(T obj)
+        {
+            if (obj == null || _where == null)
+                return 0;
+            var table = this._conn.GetMapping(typeof(T));
+
+            var ret = GenerateUpdate(obj, table).ExecuteUpdate();
+            if (ret > 0)
+                return ret;
+
+            return _conn.Insert(obj);
         }
         public int Delete()
         {
             if (_where == null)
                 return 0;
             var table = this._conn.GetMapping(typeof(T));
-            return GenerateDelete(table).ExecuteNonQuery();
+            return GenerateDelete(table).ExecuteUpdate();
         }
         public int Count()
         {
@@ -248,6 +299,12 @@
                 query += " WHERE " + w.CommandText;
             }
 
+            if (_betweenBy != null)
+            {
+                query += " WHERE \"" + _betweenBy.ColumnName + "\" BETWEEN ? AND ? ";
+                args.Add(_betweenBy.Start);
+                args.Add(_betweenBy.End);
+            }
             if (_orderBys != null && _orderBys.Count > 0)
             {
                 string t = string.Join(", ",
@@ -303,7 +360,7 @@
 
 
         #region  构建条件语句(使用Lambda表达式<反射>)
-        private CompileResult CompileExpr(Expression expr, List<object> queryArgs)
+        private CompileResult CompileExpr(Expression expr, List<object> expr_agrs)
         {
             if (expr == null)
                 throw new NotSupportedException("Expression is NULL");
@@ -312,8 +369,8 @@
             {
                 BinaryExpression bin = (BinaryExpression)expr;
 
-                CompileResult leftr = CompileExpr(bin.Left, queryArgs);
-                CompileResult rightr = CompileExpr(bin.Right, queryArgs);
+                CompileResult leftr = CompileExpr(bin.Left, expr_agrs);
+                CompileResult rightr = CompileExpr(bin.Right, expr_agrs);
 
                 //If either side is a parameter and is null, then handle the other side specially (for "is null"/"is not null")
                 string text;
@@ -330,60 +387,60 @@
             {
                 MethodCallExpression call = (MethodCallExpression)expr;
                 CompileResult[] args = new CompileResult[call.Arguments.Count];
-                CompileResult obj = call.Object != null ? CompileExpr(call.Object, queryArgs) : null;
+                CompileResult obj = call.Object != null ? CompileExpr(call.Object, expr_agrs) : null;
 
-                for (int i = 0; i < args.Length; i++) args[i] = CompileExpr(call.Arguments[i], queryArgs);
+                for (int i = 0; i < args.Length; i++) args[i] = CompileExpr(call.Arguments[i], expr_agrs);
 
-                string sqlCall = "";
+                string sql_call = "";
 
                 if (call.Method.Name == "Like" && args.Length == 2)
                 {
-                    sqlCall = "(" + args[0].CommandText + " LIKE " + args[1].CommandText + ")";
+                    sql_call = "(" + args[0].CommandText + " LIKE " + args[1].CommandText + ")";
                 }
                 else if (call.Method.Name == "Contains" && args.Length == 2)
                 {
-                    sqlCall = "(" + args[1].CommandText + " IN " + args[0].CommandText + ")";
+                    sql_call = "(" + args[1].CommandText + " IN " + args[0].CommandText + ")";
                 }
                 else if (call.Method.Name == "Contains" && args.Length == 1)
                 {
                     if (call.Object != null && call.Object.Type == typeof(string))
-                        sqlCall = "(" + obj.CommandText + " LIKE ('%' || " + args[0].CommandText + " || '%'))";
+                        sql_call = "(" + obj.CommandText + " LIKE ('%' || " + args[0].CommandText + " || '%'))";
                     else
-                        sqlCall = "(" + args[0].CommandText + " in " + obj.CommandText + ")";
+                        sql_call = "(" + args[0].CommandText + " in " + obj.CommandText + ")";
                 }
                 else if (call.Method.Name == "StartsWith" && args.Length == 1)
                 {
-                    sqlCall = "(" + obj.CommandText + " LIKE (" + args[0].CommandText + " || '%'))";
+                    sql_call = "(" + obj.CommandText + " LIKE (" + args[0].CommandText + " || '%'))";
                 }
                 else if (call.Method.Name == "EndsWith" && args.Length == 1)
                 {
-                    sqlCall = "(" + obj.CommandText + " LIKE ('%' || " + args[0].CommandText + "))";
+                    sql_call = "(" + obj.CommandText + " LIKE ('%' || " + args[0].CommandText + "))";
                 }
                 else if (call.Method.Name == "Equals" && args.Length == 1)
                 {
-                    sqlCall = "(" + obj.CommandText + " = (" + args[0].CommandText + "))";
+                    sql_call = "(" + obj.CommandText + " = (" + args[0].CommandText + "))";
                 }
                 else if (call.Method.Name == "ToLower")
                 {
-                    sqlCall = "(LOWER(" + obj.CommandText + "))";
+                    sql_call = "(LOWER(" + obj.CommandText + "))";
                 }
                 else if (call.Method.Name == "ToUpper")
                 {
-                    sqlCall = "(UPPER(" + obj.CommandText + "))";
+                    sql_call = "(UPPER(" + obj.CommandText + "))";
                 }
                 else
                 {
-                    sqlCall = call.Method.Name.ToLower() + "(" +
+                    sql_call = call.Method.Name.ToLower() + "(" +
                               string.Join(",", args.Select(a => a.CommandText).ToArray()) + ")";
                 }
 
-                return new CompileResult { CommandText = sqlCall };
+                return new CompileResult { CommandText = sql_call };
             }
 
             if (expr.NodeType == ExpressionType.Constant)
             {
                 ConstantExpression c = (ConstantExpression)expr;
-                queryArgs.Add(c.Value);
+                expr_agrs.Add(c.Value);
                 return new CompileResult
                 {
                     CommandText = "?",
@@ -395,7 +452,7 @@
             {
                 UnaryExpression u = (UnaryExpression)expr;
                 Type ty = u.Type;
-                CompileResult valr = CompileExpr(u.Operand, queryArgs);
+                CompileResult valr = CompileExpr(u.Operand, expr_agrs);
                 return new CompileResult
                 {
                     CommandText = valr.CommandText,
@@ -420,9 +477,9 @@
                 object obj = null;
                 if (mem.Expression != null)
                 {
-                    CompileResult r = CompileExpr(mem.Expression, queryArgs);
+                    CompileResult r = CompileExpr(mem.Expression, expr_agrs);
                     if (r.Value == null) throw new NotSupportedException("Member access failed to compile expression");
-                    if (r.CommandText == "?") queryArgs.RemoveAt(queryArgs.Count - 1);
+                    if (r.CommandText == "?") expr_agrs.RemoveAt(expr_agrs.Count - 1);
                     obj = r.Value;
                 }
 
@@ -456,7 +513,7 @@
                     string head = "";
                     foreach (object a in (IEnumerable)val)
                     {
-                        queryArgs.Add(a);
+                        expr_agrs.Add(a);
                         sb.Append(head);
                         sb.Append("?");
                         head = ",";
@@ -470,7 +527,7 @@
                     };
                 }
 
-                queryArgs.Add(val);
+                expr_agrs.Add(val);
                 return new CompileResult
                 {
                     CommandText = "?",
@@ -490,24 +547,21 @@
                 return Convert.ChangeType(obj, t);
             return Convert.ChangeType(obj, nut);
         }
-        private static string CompileNullBinaryExpression(BinaryExpression expression, CompileResult parameter)
+        private static string CompileNullBinaryExpression(BinaryExpression expr, CompileResult parameter)
         {
-            switch (expression.NodeType)
+            switch (expr.NodeType)
             {
                 case ExpressionType.Equal:
                     return "(" + parameter.CommandText + " IS ?)";
                 case ExpressionType.NotEqual:
                     return "(" + parameter.CommandText + " IS NOT ?)";
                 default:
-                    throw new NotSupportedException("Cannot compile Null-BinaryExpression with type " +
-                                                    expression.NodeType);
+                    throw new NotSupportedException("Cannot compile Null-BinaryExpression with type " + expr.NodeType);
             }
         }
-        private string GetSqlName(Expression expr)
+        private static string GetSqlName(Expression expr)
         {
-            ExpressionType n = expr.NodeType;
-
-            switch (n)
+            switch (expr.NodeType)
             {
                 case ExpressionType.GreaterThan:
                     return ">";
@@ -530,7 +584,7 @@
                 case ExpressionType.NotEqual:
                     return "!=";
                 default:
-                    throw new NotSupportedException("Cannot get SQL for: " + n);
+                    throw new NotSupportedException("Cannot get SQL for: " + expr.NodeType);
             }
         }
         #endregion

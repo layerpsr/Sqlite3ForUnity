@@ -67,6 +67,11 @@ namespace Sqlite3
             return this.Columns.FirstOrDefault(col => col.PropertyName == col_name);
         }
 
+        public void Dispose()
+        {
+            if (_insertCommand != null)
+                _insertCommand.Dispose();
+        }
         public DBInsertCommand GetInsertCommand(DBConnection conn, string extra)
         {
             if (_insertCommand == null)
@@ -105,15 +110,6 @@ namespace Sqlite3
             cmd.CommandText = insertSql;
             return cmd;
         }
-
-        protected internal void Dispose()
-        {
-            if (_insertCommand != null)
-            {
-                _insertCommand.Dispose();
-                _insertCommand = null;
-            }
-        }
     }
 
     public class TableMemMapping : TableMapping
@@ -123,7 +119,7 @@ namespace Sqlite3
             this.MappedType = type;
             //Name
             var attr = (TableAttribute)type.GetCustomAttributes(typeof(TableAttribute), true).FirstOrDefault();
-            this.TableName = attr?.Name ?? type.Name;
+            this.TableName = attr?.Name ?? type.FullName.Replace(".", "_").Replace("+", "_");
             if (attr == null)
             {
                 Debug.LogWarning(string.Format("Type '{0}' is undefined as TableAttribute", type.FullName));

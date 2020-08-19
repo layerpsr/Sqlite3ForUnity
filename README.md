@@ -9,13 +9,13 @@
   > 能够跟很多种语言相结合, 运行时占有资源非常低
   
 * **致谢**
-> **SQLite-net: ** https://github.com/praeclarum/sqlite-net
-> **SQLite4Unity3d : ** http://www.example.com
+> **SQLite4Unity3d:** http://www.example.com
 
 
-## 优点
+## 使用特点
 * 无需手动构建SQL语句
-* 使用C#反射构建对象, 或者为对象生成代码类来构建(无需使用反射)
+* 使用C#反射构建对象和数据表信息
+* GenCode生成代码类, 静态构建对象以及数据表信息(无需使用反射)
 
 
 ## 如何使用?
